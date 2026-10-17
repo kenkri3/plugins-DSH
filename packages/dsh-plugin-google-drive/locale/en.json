@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Google Drive Backup",
+    "description": "Saves a DeepSeek Harness project as a zip and the project's chat sessions as Markdown to a folder in your Google Drive, using the Drive API rather than the read-only G: drive."
+  }
+}

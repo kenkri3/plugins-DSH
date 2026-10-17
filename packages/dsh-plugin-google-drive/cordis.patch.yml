@@ -1,0 +1,16 @@
+# Google Disk — en profilbundle som installerer én Host-plugin.
+#
+# Pluginen erklærer ingen Config, av samme grunn som søsterpluginene
+# `write-guard` og `skjemavisning`: en bundle som installeres utenfor profilen
+# kan ikke løse opp et schema-bibliotek, og DSH projiserer Config til JSON
+# Schema. En rad med et alminnelig JSON Schema-objekt havner i `failed`, og da
+# kalles `apply` aldri — verktøyene dukker stille aldri opp.
+#
+# Alle innstillinger er derfor miljøvariabler eller verdier som lagres gjennom
+# `ctx.credentials` under kjøring, ikke patch-konfigurasjon:
+#   DSH_GOOGLE_DRIVE_PORT      port for OAuth-tilbakeringing (standard 45813)
+#   DSH_GOOGLE_DRIVE_MAPPE     mappe i Min disk (standard "DeepSeek Harness")
+#   DSH_GOOGLE_DRIVE_EXCLUDES  kommaseparert liste som overstyrer standard ekskluderinger
+- insert:
+    - id: google-drive
+      name: 'dsh-plugin-google-drive'

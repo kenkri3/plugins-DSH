@@ -1,0 +1,18 @@
+# Node
+node_modules/
+npm-debug.log*
+pnpm-debug.log*
+
+# Test- og kjøretidsrester
+*.log
+scratch/
+coverage/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Lokale miljøfiler
+.env
+.env.*
