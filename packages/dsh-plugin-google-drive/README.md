@@ -53,8 +53,10 @@ speilingen i Drive under `<prosjektmappe>/innhold`.
 | Last opp endringer | `/drive innhold opp [prosjekt]` | `google_drive_innhold_last_opp` |
 | Hent endringer | `/drive innhold hent [prosjekt] [--skriv] [--tving]` | `google_drive_innhold_hent` |
 
-**Filtre.** Bare `.md`, `.txt`, `.json`, `.csv` og `.svg` synkroniseres. Alt annet
-blir stående urørt og telles i svaret.
+**Filtre.** Bare `.md`, `.txt`, `.json`, `.csv`, `.svg` og `.ts` synkroniseres. Alt
+annet blir stående urørt og telles i svaret. `.ts` er med fordi innholdet i
+AIProgram og AIChat ligger i typede innholdsfiler; rediger dem varsomt og valider
+med `npm run content:check` etterpå.
 
 **Hemmeligheter.** Filer som ser ut som hemmeligheter nektes selv når endelsen
 ellers ville vært tillatt: `.env*`, `*.key`, `*.pem`, `*.p12`, `id_rsa*`,

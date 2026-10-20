@@ -18,7 +18,7 @@
  *
  * ── What is never synced ──────────────────────────────────────────────────
  *
- * Only text: `.md`, `.txt`, `.json`, `.csv`, `.svg`. Names that look like
+ * Only text: `.md`, `.txt`, `.json`, `.csv`, `.svg`, `.ts`. Names that look like
  * secrets (`.env*`, `*.key`, `*.pem`, `*.p12`, `id_rsa*`, `credentials*`,
  * `secrets*`) are refused even when their extension would be allowed, because a
  * mirror is a second place for a credential to leak from. Nothing is written to
@@ -51,7 +51,7 @@ export const DEFAULT_CONTENT = 'content';
 export const MIRROR_FOLDER = 'innhold';
 
 /** The only extensions that travel. Everything else is left alone. */
-export const TEXT_EXTENSIONS = ['.md', '.txt', '.json', '.csv', '.svg'];
+export const TEXT_EXTENSIONS = ['.md', '.txt', '.json', '.csv', '.svg', '.ts'];
 
 /** Upload bounds: a content mirror is text, not an asset store. */
 export const MAX_SYNC_FILES = 300;
@@ -67,6 +67,7 @@ const MIME_BY_EXTENSION = new Map([
   ['.json', 'application/json; charset=UTF-8'],
   ['.csv', 'text/csv; charset=UTF-8'],
   ['.svg', 'image/svg+xml'],
+  ['.ts', 'text/plain; charset=UTF-8'],
 ]);
 
 /** An error whose message is written for a person, not a log. */
@@ -745,7 +746,7 @@ function contentNotes(report) {
   }
   if (report.ignored?.length > 0) {
     lines.push(
-      `${report.ignored.length} fil(er) er ikke tekst (.md, .txt, .json, .csv, .svg) og ble ikke rørt.`,
+      `${report.ignored.length} fil(er) er ikke tekst (.md, .txt, .json, .csv, .svg, .ts) og ble ikke rørt.`,
     );
   }
   if (report.unsafe?.length > 0) {
