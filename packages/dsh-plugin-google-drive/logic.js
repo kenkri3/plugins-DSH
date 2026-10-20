@@ -270,6 +270,34 @@ export function parseDriveArgument(raw) {
     return { action: 'verifiser', deep: parts[1]?.toLowerCase() === 'dyp' };
   }
   if (action === 'status' || action === 'hjelp') return { action: 'status' };
+  if (action === 'hent' || action === 'gjenopprett') {
+    const rest = parts.slice(1).filter((part) => !part.startsWith('--'));
+    return {
+      action: 'hent',
+      prosjekt: rest[0] ?? '',
+      til: rest[1] ?? '',
+      overskriv: parts.includes('--overskriv'),
+    };
+  }
+  if (action === 'innhold') {
+    const sub = String(parts[1] ?? '').toLowerCase();
+    const rest = parts.slice(2).filter((part) => !part.startsWith('--'));
+    if (sub === 'opp' || sub === 'last-opp' || sub === 'last') {
+      return { action: 'innhold-opp', prosjekt: rest[0] ?? '', torrkjoer: parts.includes('--torrkjoer') };
+    }
+    if (sub === 'hent' || sub === 'ned') {
+      return {
+        action: 'innhold-hent',
+        prosjekt: rest[0] ?? '',
+        skriv: parts.includes('--skriv'),
+        tving: parts.includes('--tving'),
+      };
+    }
+    if (sub === '' || sub === 'status' || sub.startsWith('--')) {
+      return { action: 'innhold-status', prosjekt: '' };
+    }
+    return { action: 'innhold-status', prosjekt: parts[1] };
+  }
   return { action: 'ukjent', value: parts.join(' ') };
 }
 
@@ -281,6 +309,77 @@ export function sameFolder(a, b) {
       .replace(/\//g, '\\')
       .toLowerCase();
   return normalize(a) !== '' && normalize(a) === normalize(b);
+}
+
+/**
+ * The drive letter of a Windows path, upper-case, or '' when there is none.
+ *
+ * The only letter that matters here is G:, the Google Drive for Desktop volume
+ * that accepts a write and loses the bytes. Nothing in this plugin may write
+ * there, so every write path checks this one function.
+ */
+export function driveLetterOf(target) {
+  const match = /^\s*([A-Za-z]):/.exec(String(target ?? ''));
+  return match ? match[1].toUpperCase() : '';
+}
+
+/** True when the path is on the G: volume. */
+export function isProtectedVolume(target) {
+  return driveLetterOf(target) === 'G';
+}
+
+/**
+ * Validate one relative path from a zip entry or a sync manifest.
+ *
+ * A backup is written by this plugin, but a restore must not *trust* that: a
+ * crafted archive with `../` or an absolute name would otherwise write outside
+ * the folder the user chose. Everything here is a refusal, not a rewrite — a
+ * name this function rejects is never silently cleaned up and used.
+ *
+ * @returns {string} the path with forward slashes and no empty segments
+ */
+export function assertSafeRelative(name) {
+  const raw = String(name ?? '');
+  if (raw.trim() === '') throw new Error('Tomt filnavn i arkivet.');
+  if (raw.includes('\\')) throw new Error(`Utrygg sti «${raw}»: backslash er ikke tillatt.`);
+  if (raw.startsWith('/')) throw new Error(`Utrygg sti «${raw}»: absolutt sti er ikke tillatt.`);
+  if (/^[A-Za-z]:/.test(raw)) throw new Error(`Utrygg sti «${raw}»: stasjonsbokstav er ikke tillatt.`);
+
+  const parts = [];
+  for (const part of raw.split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') throw new Error(`Utrygg sti «${raw}»: «..» er ikke tillatt.`);
+    if (/[\u0000-\u001f<>:"|?*]/.test(part)) {
+      throw new Error(`Utrygg sti «${raw}»: ugyldige tegn i filnavnet.`);
+    }
+    if (/[ .]$/.test(part)) {
+      throw new Error(`Utrygg sti «${raw}»: filnavn kan ikke slutte med punktum eller mellomrom.`);
+    }
+    parts.push(part);
+  }
+  if (parts.length === 0) throw new Error(`Utrygg sti «${raw}»: ingen filnavn igjen.`);
+  return parts.join('/');
+}
+
+/** Non-throwing variant, for callers that skip an unsafe name instead of failing. */
+export function isSafeRelative(name) {
+  try {
+    assertSafeRelative(name);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Resolve a validated relative path under a root, refusing to leave it. */
+export function resolveUnder(root, relative) {
+  const base = path.resolve(String(root ?? ''));
+  const safe = assertSafeRelative(relative);
+  const absolute = path.resolve(base, ...safe.split('/'));
+  if (absolute !== base && !absolute.startsWith(base + path.sep)) {
+    throw new Error(`Utrygg sti «${relative}»: peker utenfor ${base}.`);
+  }
+  return absolute;
 }
 
 /** Session header cwd candidates: the recorded spelling and the real path. */

@@ -8,12 +8,15 @@
  * once on 429/5xx, so a transient Google hiccup does not fail a save.
  */
 
+import { randomUUID } from 'node:crypto';
+
 import { describeDriveFailure } from './logic.js';
 
 export const DRIVE_API = 'https://www.googleapis.com/drive/v3';
 export const UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
 export const FOLDER_MIME = 'application/vnd.google-apps.folder';
 export const ZIP_MIME = 'application/zip';
+export const TEXT_MIME = 'text/plain; charset=UTF-8';
 
 /** An error carrying the HTTP status and Google's own payload. */
 export class DriveError extends Error {
@@ -206,6 +209,97 @@ export function createDrive(options = {}) {
     return result;
   }
 
+  /**
+   * Create one file with metadata and content in a single multipart/related
+   * request. One request means there is no half-created file to clean up when
+   * the connection drops between a metadata call and a media call.
+   */
+  async function createFile(input = {}) {
+    const data = Buffer.isBuffer(input.data) ? input.data : Buffer.from(input.data ?? []);
+    const mimeType = String(input.mimeType ?? TEXT_MIME);
+    const metadata = { name: input.name, mimeType, parents: input.parentId ? [input.parentId] : undefined };
+
+    // The boundary must not occur inside the payload, or the body would be cut
+    // in the wrong place. A random UUID makes that practically impossible, and
+    // the loop makes it certain for the file actually being sent.
+    let boundary = `dsh-${randomUUID()}`;
+    while (data.includes(Buffer.from(boundary))) boundary = `dsh-${randomUUID()}`;
+
+    const head = Buffer.from(
+      `--${boundary}\r\n` +
+        'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+        `${JSON.stringify(metadata)}\r\n` +
+        `--${boundary}\r\n` +
+        `Content-Type: ${mimeType}\r\n\r\n`,
+      'utf8',
+    );
+    const tail = Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8');
+    const body = Buffer.concat([head, data, tail]);
+
+    const created = await json(
+      `${uploadApi}/files?uploadType=multipart&fields=${encodeURIComponent('id,name')}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': `multipart/related; boundary="${boundary}"`,
+          'Content-Length': String(body.length),
+        },
+        body,
+        signal: input.signal,
+      },
+    );
+    if (!created?.id) {
+      throw new DriveError('Google Disk opprettet filen uten å returnere en fil-id.', { code: 'OPPLASTING' });
+    }
+    return { id: created.id, name: created.name ?? input.name };
+  }
+
+  /** Replace an existing file's content with a simple media upload. */
+  async function updateFile(fileId, data, options = {}) {
+    const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data ?? []);
+    const updated = await json(
+      `${uploadApi}/files/${encodeURIComponent(fileId)}?uploadType=media&fields=${encodeURIComponent('id')}`,
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': String(options.mimeType ?? TEXT_MIME),
+          'Content-Length': String(bytes.length),
+        },
+        body: bytes,
+        signal: options.signal,
+      },
+    );
+    if (!updated?.id) {
+      throw new DriveError('Google Disk oppdaterte filen uten å returnere en fil-id.', { code: 'OPPLASTING' });
+    }
+    return { id: updated.id };
+  }
+
+  /** List every non-trashed child of one folder, containers and files alike. */
+  async function listChildren(parentId, options = {}) {
+    const query = encodeURIComponent(`'${escapeQueryValue(parentId)}' in parents and trashed = false`);
+    const fields = encodeURIComponent('files(id,name,mimeType,size,modifiedTime,md5Checksum)');
+    const payload = await json(
+      `${driveApi}/files?q=${query}&fields=${fields}&pageSize=1000&orderBy=${encodeURIComponent('name')}`,
+      { signal: options.signal },
+    );
+    return Array.isArray(payload?.files) ? payload.files : [];
+  }
+
+  /** Find one child by exact name under a parent, or `undefined`. */
+  async function findChild(parentId, name, options = {}) {
+    const query = encodeURIComponent(
+      `name = '${escapeQueryValue(name)}' and trashed = false and ` +
+        `'${escapeQueryValue(parentId)}' in parents`,
+    );
+    const fields = encodeURIComponent('files(id,name,mimeType,size,modifiedTime,md5Checksum)');
+    const payload = await json(`${driveApi}/files?q=${query}&fields=${fields}&pageSize=10`, {
+      signal: options.signal,
+    });
+    const files = Array.isArray(payload?.files) ? payload.files : [];
+    return files[0];
+  }
+
   /** List the backups in one project folder, newest first. */
   async function listBackups(folderId, signal) {
     const query = encodeURIComponent(backupQuery(folderId));
@@ -257,6 +351,10 @@ export function createDrive(options = {}) {
     ensureFolder,
     listFolders,
     uploadFile,
+    createFile,
+    updateFile,
+    listChildren,
+    findChild,
     listBackups,
     trashFile,
     downloadFile,

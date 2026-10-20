@@ -56,11 +56,15 @@ function fakeContext() {
 
 const AGENT = { session: { header: { cwd: process.cwd() } } };
 
-test('apply registers the four tools and two commands', () => {
+test('apply registers every tool and the two commands', () => {
   const { ctx, tools, commands } = fakeContext();
   apply(ctx);
 
   assert.deepEqual([...tools.keys()].sort(), [
+    'google_drive_hent',
+    'google_drive_innhold_hent',
+    'google_drive_innhold_last_opp',
+    'google_drive_innhold_status',
     'google_drive_koble',
     'google_drive_lagre',
     'google_drive_liste',
@@ -85,7 +89,7 @@ test('a tool result is a Markdown string, not a thrown error', async () => {
   const status = await tools.get('google_drive_status').execute({}, { agent: AGENT });
   assert.equal(typeof status, 'string');
   assert.match(status, /Ikke koblet til Google Disk/);
-  assert.match(status, /dsh-plugin-google-drive 0\.1\.0/);
+  assert.match(status, /dsh-plugin-google-drive 0\.2\.0/);
 
   const list = await tools.get('google_drive_liste').execute({ antall: 5 }, { agent: AGENT });
   assert.match(list, /ikke koblet til/i);
@@ -176,7 +180,7 @@ test('the registered disposers remove every contribution', () => {
   };
 
   apply(recording);
-  assert.equal(tools.size, 5);
+  assert.equal(tools.size, 9);
   assert.equal(commands.size, 2);
 
   for (const dispose of disposers) dispose();

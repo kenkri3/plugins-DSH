@@ -17,6 +17,15 @@
  * to `Min disk/<mappe>/<prosjekt>/`, so it is visible in Drive itself, and the
  * oldest versions are moved to the Drive trash beyond a retention window.
  *
+ * ── Restore and content sync ──────────────────────────────────────────────
+ *
+ * A restore downloads a version again, checks its CRC and sizes, and stages it
+ * beside the chosen target before swapping it in, so a failed restore leaves the
+ * folder it found. Content sync is the small, frequent counterpart: a folder of
+ * text files mirrored to `<prosjekt>/innhold` in Drive, with a three-way
+ * comparison so a change made on both sides is reported as a conflict instead of
+ * silently overwritten. Both live in ./restore.js and ./sync.js.
+ *
  * ── Design constraints ────────────────────────────────────────────────────
  *
  *   - No `Config`, no dependency. A bundle installed from outside the profile
@@ -54,16 +63,26 @@ import {
   toExcludeSet,
 } from './logic.js';
 import * as oauth from './oauth.js';
+import { restoreProject, restoreTekst } from './restore.js';
 import { saveProject } from './save.js';
+import {
+  DEFAULT_CONTENT,
+  contentDownload,
+  contentStatus,
+  contentUpload,
+  innholdHentTekst,
+  innholdOppTekst,
+  innholdStatusTekst,
+} from './sync.js';
 import { verificationSummary, verifyArchive } from './verify.js';
 
 /** Kept beside package.json; bumped together. */
-const PLUGIN_VERSION = '0.1.0';
+const PLUGIN_VERSION = '0.2.0';
 
 /**
  * Every tool declares `output { schema, render }`: DSH validates the executor's
  * value against `schema` before rendering, and rejects a registration without
- * it. All four tools answer with Markdown text.
+ * it. Every tool answers with Markdown text.
  */
 const TEKSTUTDATA = {
   schema: { type: 'string' },
@@ -487,6 +506,32 @@ export function apply(ctx) {
     const cwd = cwdOf(agent);
     const match = (registry?.list() ?? []).find((workspace) => sameFolder(workspace.path, cwd));
     return [{ path: cwd, title: match?.title ?? projectNameFromPath(cwd) }];
+  };
+
+  /**
+   * Exactly one project, from the optional `prosjekt` argument.
+   *
+   * A restore has one destination and a content mirror belongs to one project,
+   * so «alle» has no meaning here. It is refused instead of being turned into
+   * "the first one", which would silently act on a project nobody chose.
+   */
+  const ettProsjekt = async (raw, agent) => {
+    const parsed = parseSaveArgument(raw);
+    if (parsed.mode === 'alle') {
+      throw new Error(
+        'Denne handlingen gjelder ett prosjekt. Oppgi prosjektnavn, eller utelat «prosjekt» for ' +
+          'prosjektet økten står i.',
+      );
+    }
+    const projects = await resolveProjects(parsed.mode, parsed.value, agent);
+    if (projects.length === 0) throw new Error('Fant ingen prosjektmappe å bruke.');
+    return projects[0];
+  };
+
+  /** The local folder a content mirror reads; `content` unless the caller says otherwise. */
+  const innholdMappe = (value) => {
+    const text = String(value ?? '').trim();
+    return text === '' ? DEFAULT_CONTENT : text;
   };
 
   // ── Save ────────────────────────────────────────────────────────────────
@@ -952,6 +997,208 @@ export function apply(ctx) {
     })
   );
 
+  ctx.effect(() =>
+    ctx.tools.register({
+      name: 'google_drive_hent',
+      description:
+        'Hent en sikkerhetskopi fra Google Disk og pakk den ut til en mappe på en lokal disk. ' +
+        'Velger den nyeste zip-en, eller «versjon» med zip-navn eller fil-id. Arkivet kontrolleres ' +
+        'med CRC og størrelse før noe skrives; den gamle mappen beholdes som <mål>.bak-<tid>. ' +
+        'Skriver aldri til G:.',
+      parameters: {
+        type: 'object',
+        properties: {
+          prosjekt: {
+            type: 'string',
+            description: 'Utelatt = denne prosjektmappen. Ellers prosjektnavn eller sti.',
+          },
+          til: {
+            type: 'string',
+            description: 'Absolutt målsti på en lokal disk, f.eks. C:\\Prosjekter\\Vikingpilot. Påkrevd.',
+          },
+          versjon: {
+            type: 'string',
+            description: 'Zip-navn eller fil-id. Utelatt = den nyeste sikkerhetskopien.',
+          },
+          overskriv: {
+            type: 'boolean',
+            description:
+              'Erstatt målet når det finnes og ikke er tomt. Den gamle mappen beholdes som <mål>.bak-<tid>.',
+          },
+          torrkjoer: {
+            type: 'boolean',
+            description: 'Vis hvilke filer som ville blitt skrevet, uten å skrive noe.',
+          },
+        },
+        required: ['til'],
+        additionalProperties: false,
+      },
+      output: TEKSTUTDATA,
+      async execute(args, exec) {
+        const til = String(args?.til ?? '').trim();
+        if (til === '') {
+          return (
+            '**Feil:** mangler «til» — en absolutt målsti på en lokal disk, ' +
+            'f.eks. `C:\\Prosjekter\\Vikingpilot`.'
+          );
+        }
+        try {
+          const project = await ettProsjekt(args?.prosjekt, exec?.agent);
+          const result = await restoreProject({
+            project,
+            drive,
+            rootFolder: mappeNavn(),
+            target: til,
+            version: args?.versjon,
+            overwrite: args?.overskriv === true,
+            dryRun: args?.torrkjoer === true,
+            signal: exec?.signal,
+          });
+          return restoreTekst(result);
+        } catch (error) {
+          return feilTekst(error);
+        }
+      },
+    })
+  );
+
+  ctx.effect(() =>
+    ctx.tools.register({
+      name: 'google_drive_innhold_status',
+      description:
+        'Sammenlikn en lokal tekstmappe (<prosjekt>/<mappe>, standard «content») med speilingen i ' +
+        'Drive under <prosjektmappe>/innhold. Viser nye, endrede, slettede og konflikter — begge ' +
+        'sider endret siden forrige synk. Skriver ingenting.',
+      parameters: {
+        type: 'object',
+        properties: {
+          prosjekt: {
+            type: 'string',
+            description: 'Utelatt = denne prosjektmappen. Ellers prosjektnavn eller sti.',
+          },
+          mappe: {
+            type: 'string',
+            description: 'Lokal mappe under prosjektet. Standard «content».',
+          },
+        },
+        additionalProperties: false,
+      },
+      output: TEKSTUTDATA,
+      async execute(args, exec) {
+        try {
+          const project = await ettProsjekt(args?.prosjekt, exec?.agent);
+          const report = await contentStatus({
+            project,
+            drive,
+            rootFolder: mappeNavn(),
+            folder: innholdMappe(args?.mappe),
+            signal: exec?.signal,
+          });
+          return innholdStatusTekst(report);
+        } catch (error) {
+          return feilTekst(error);
+        }
+      },
+    })
+  );
+
+  ctx.effect(() =>
+    ctx.tools.register({
+      name: 'google_drive_innhold_last_opp',
+      description:
+        'Last opp nye og endrede tekstfiler (.md, .txt, .json, .csv, .svg) fra <prosjekt>/<mappe> ' +
+        'til Drive-mappen <prosjektmappe>/innhold. Maks 300 filer, 2 MB per fil og 20 MB totalt. ' +
+        'Nekter filer som ser ut som hemmeligheter (.env*, *.key, *.pem, *.p12, id_rsa*, ' +
+        'credentials*, secrets*). Oppdaterer manifestet i Drive og basisfilen lokalt.',
+      parameters: {
+        type: 'object',
+        properties: {
+          prosjekt: {
+            type: 'string',
+            description: 'Utelatt = denne prosjektmappen. Ellers prosjektnavn eller sti.',
+          },
+          mappe: {
+            type: 'string',
+            description: 'Lokal mappe under prosjektet. Standard «content».',
+          },
+          torrkjoer: {
+            type: 'boolean',
+            description: 'Vis hvilke filer som ville blitt lastet opp, uten å laste opp noe.',
+          },
+        },
+        additionalProperties: false,
+      },
+      output: TEKSTUTDATA,
+      async execute(args, exec) {
+        try {
+          const project = await ettProsjekt(args?.prosjekt, exec?.agent);
+          const result = await contentUpload({
+            project,
+            drive,
+            rootFolder: mappeNavn(),
+            folder: innholdMappe(args?.mappe),
+            dryRun: args?.torrkjoer === true,
+            signal: exec?.signal,
+          });
+          return innholdOppTekst(result);
+        } catch (error) {
+          return feilTekst(error);
+        }
+      },
+    })
+  );
+
+  ctx.effect(() =>
+    ctx.tools.register({
+      name: 'google_drive_innhold_hent',
+      description:
+        'Hent endrede og slettede filer fra Drive-mappen <prosjektmappe>/innhold til ' +
+        '<prosjekt>/<mappe>. Uten skriv: true vises bare hva som ville skjedd. Er begge sider ' +
+        'endret siden forrige synk, nektes filen per fil med mindre tving: true. Skriver atomisk ' +
+        'og nekter mål under G:.',
+      parameters: {
+        type: 'object',
+        properties: {
+          prosjekt: {
+            type: 'string',
+            description: 'Utelatt = denne prosjektmappen. Ellers prosjektnavn eller sti.',
+          },
+          mappe: {
+            type: 'string',
+            description: 'Lokal mappe under prosjektet. Standard «content».',
+          },
+          skriv: {
+            type: 'boolean',
+            description: 'Skriv endringene. Standard false = bare vis hva som ville skjedd.',
+          },
+          tving: {
+            type: 'boolean',
+            description: 'Ta Drive-versjonen også når begge sider er endret siden forrige synk.',
+          },
+        },
+        additionalProperties: false,
+      },
+      output: TEKSTUTDATA,
+      async execute(args, exec) {
+        try {
+          const project = await ettProsjekt(args?.prosjekt, exec?.agent);
+          const result = await contentDownload({
+            project,
+            drive,
+            rootFolder: mappeNavn(),
+            folder: innholdMappe(args?.mappe),
+            write: args?.skriv === true,
+            force: args?.tving === true,
+            signal: exec?.signal,
+          });
+          return innholdHentTekst(result);
+        } catch (error) {
+          return feilTekst(error);
+        }
+      },
+    })
+  );
+
   // ── Commands ────────────────────────────────────────────────────────────
 
   ctx.effect(() =>
@@ -983,10 +1230,16 @@ export function apply(ctx) {
     ctx.commands.register({
       name: 'drive',
       description:
-        'Google Disk: vis status (/drive), koble til (/drive koble <client-id> eller en ' +
-        'client_secret-*.json), frakoble (/drive frakoble), list sikkerhetskopier (/drive liste) ' +
-        'eller verifiser den nyeste (/drive verifiser [dyp]).',
-      input: { hint: 'status | koble <client-id> eller "<fil.json>" | frakoble | liste | verifiser [dyp]' },
+        'Google Disk: status (/drive), koble til (/drive koble <client-id> eller en ' +
+        'client_secret-*.json), frakoble (/drive frakoble), list sikkerhetskopier (/drive liste), ' +
+        'verifiser den nyeste (/drive verifiser [dyp]), hent en sikkerhetskopi til disk ' +
+        '(/drive hent <prosjekt> <til> [--overskriv]), eller synk innholdsmappen ' +
+        '(/drive innhold [prosjekt], /drive innhold opp, /drive innhold hent [--skriv] [--tving]).',
+      input: {
+        hint:
+          'status | koble <client-id> eller "<fil.json>" | frakoble | liste | verifiser [dyp] | ' +
+          'hent <prosjekt> <til> [--overskriv] | innhold [opp|hent] [prosjekt] [--skriv] [--tving]',
+      },
       async handler(invocation) {
         const parsed = parseDriveArgument(invocation.rawInput);
         try {
@@ -1041,11 +1294,72 @@ export function apply(ctx) {
             return { kind: 'success', text: await statusTekst() };
           }
 
+          if (parsed.action === 'hent') {
+            if (String(parsed.til ?? '').trim() === '') {
+              return {
+                kind: 'error',
+                text:
+                  '**Mangler målsti.** Bruk `/drive hent <prosjekt> <til> [--overskriv]`, f.eks. ' +
+                  '`/drive hent Vikingpilot "C:\\Prosjekter\\Vikingpilot"`.',
+              };
+            }
+            const project = await ettProsjekt(parsed.prosjekt, invocation.agent);
+            const result = await restoreProject({
+              project,
+              drive,
+              rootFolder: mappeNavn(),
+              target: parsed.til,
+              overwrite: parsed.overskriv === true,
+              signal: invocation.signal,
+            });
+            return { kind: 'success', text: restoreTekst(result) };
+          }
+
+          if (parsed.action === 'innhold-status') {
+            const project = await ettProsjekt(parsed.prosjekt, invocation.agent);
+            const report = await contentStatus({
+              project,
+              drive,
+              rootFolder: mappeNavn(),
+              folder: DEFAULT_CONTENT,
+              signal: invocation.signal,
+            });
+            return { kind: 'success', text: innholdStatusTekst(report) };
+          }
+
+          if (parsed.action === 'innhold-opp') {
+            const project = await ettProsjekt(parsed.prosjekt, invocation.agent);
+            const result = await contentUpload({
+              project,
+              drive,
+              rootFolder: mappeNavn(),
+              folder: DEFAULT_CONTENT,
+              dryRun: parsed.torrkjoer === true,
+              signal: invocation.signal,
+            });
+            return { kind: 'success', text: innholdOppTekst(result) };
+          }
+
+          if (parsed.action === 'innhold-hent') {
+            const project = await ettProsjekt(parsed.prosjekt, invocation.agent);
+            const result = await contentDownload({
+              project,
+              drive,
+              rootFolder: mappeNavn(),
+              folder: DEFAULT_CONTENT,
+              write: parsed.skriv === true,
+              force: parsed.tving === true,
+              signal: invocation.signal,
+            });
+            return { kind: 'success', text: innholdHentTekst(result) };
+          }
+
           return {
             kind: 'error',
             text:
               `Ukjent kommando «${parsed.value}». Bruk \`/drive\` for status, ` +
-              '`/drive koble <client-id>`, `/drive frakoble` eller `/drive liste`.',
+              '`/drive koble <client-id>`, `/drive frakoble`, `/drive liste`, `/drive verifiser`, ' +
+              '`/drive hent <prosjekt> <til>`, eller `/drive innhold [opp|hent]`.',
           };
         } catch (error) {
           return { kind: 'error', text: feilTekst(error) };
