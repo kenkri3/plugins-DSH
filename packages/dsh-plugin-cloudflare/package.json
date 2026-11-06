@@ -1,0 +1,11 @@
+{
+  "name": "dsh-plugin-cloudflare",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cloudflare i DeepSeek Harness: Cloudflares egen API-MCP-server (2 500 endepunkter for DNS, Workers, R2, Zero Trust og dokumentasjon) koblet inn som MCP med token fra fil. Sending og endringer går gjennom Cloudflare sitt eget API og krever tokenets tillatelser.",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "meta": {
+    "title": "Automasjoner",
+    "description": "Én tråd per automatisering: neste og siste kjøring, resultat og hva som venter."
+  },
+  "topp": {
+    "altGront": "Alt grønt",
+    "oppsummering": "{tilFiks} til fiks · {dinTur} din tur",
+    "gront": "{antall} grønt"
+  }
+}

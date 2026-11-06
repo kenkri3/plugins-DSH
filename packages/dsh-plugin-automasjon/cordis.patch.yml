@@ -1,0 +1,12 @@
+# Automasjon — automasjonsoversikt i DSH-dashbordet.
+#
+# Panelet ligger i `main` under nøkkelen `automasjon` og har ikonet sitt i
+# `sidebar.panellist`. Host-halvdelen leser kildene og svarer på
+# `GET /automasjon/state.json` på den samme webserveren som GUI-et bruker.
+#
+# Ingen Config med vilje: bundlen installeres fra en mappe utenfor profilen, og
+# en rad som ikke kan projiseres havner i `failed` (samme grunn som felles).
+# Innstillinger leses i stedet fra ~/.dsh/automasjon/config.json.
+- insert:
+    - id: automasjon
+      name: 'dsh-plugin-automasjon'

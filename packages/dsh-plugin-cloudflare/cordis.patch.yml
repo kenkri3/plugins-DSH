@@ -1,0 +1,31 @@
+﻿# Cloudflare — konfigurasjon-only bundle.
+#
+# Den inneholder ingen kjørbar modul med vilje. Den setter inn den medfølgende
+# MCP-klienten og peker den på Cloudflares egen API-MCP-server over HTTP:
+#
+#   * hele Cloudflare-API-et (2 500+ endepunkter) som to verktøy — search() og
+#     execute() — i stedet for 2 594 native verktøydefinisjoner (~1,17 mill. tokens),
+#   * dokumentasjonsverktøyet docs() følger med,
+#   * ingenting lastes fra npm, så det finnes ingen modulversjon som kan bli stale.
+#
+# Autentisering: Bearer-token. MCP-klienten har ikke OAuth-flyt, så tokenet leses
+# fra fil ved oppstart — aldri fra samtalen og aldri fra en commit:
+#
+#   %USERPROFILE%\.dsh\tools\cloudflare\api-token
+#
+# Miljøvariabelen CLOUDFLARE_API_TOKEN vinner hvis den er satt. Mangler begge,
+# sender headeren «Bearer» og serveren svarer 401; da skal verktøyene mangle i
+# listen framfor at hele profilen ryker — derfor failOnStartupError: false.
+- insert:
+    - id: cloudflare-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: cloudflare
+        transport: streamable-http
+        url: https://mcp.cloudflare.com/mcp
+        headers:
+          Authorization: !!js (() => { try { const fs = process.getBuiltinModule('node:fs'); const path = process.getBuiltinModule('node:path'); const fromEnv = (process.env.CLOUDFLARE_API_TOKEN || '').trim(); if (fromEnv) return 'Bearer ' + fromEnv; const home = process.env.USERPROFILE || process.env.HOME || ''; const file = path.join(home, '.dsh', 'tools', 'cloudflare', 'api-token'); return 'Bearer ' + fs.readFileSync(file, 'utf8').trim(); } catch { return 'Bearer'; } })()
+        # Code Mode kjører generert JavaScript i en isolert worker, så et kall tar
+        # lengre tid enn et vanlig API-kall.
+        toolCallTimeoutMs: 120000
+        failOnStartupError: false

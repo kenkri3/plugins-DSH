@@ -1,0 +1,11 @@
+# Hurtigbytter — finn trad og prosjekt uten aa scrolle i sidelinjen.
+#
+# Klient-halvdelen registrerer seg i `shell.overlay`, som er Harness-ets eget
+# lag for flytende elementer over alle kolonnene. Sidelinjen rores ikke:
+# `sidebar.workspaces` er en single-slot som eies av SidebarRoot.
+#
+# Host-halvdelen gjor ingenting. Ingen Config med vilje: bundlen installeres fra
+# en mappe utenfor profilen, og en rad som ikke kan projiseres havner i `failed`.
+- insert:
+    - id: hurtigbytter
+      name: 'dsh-plugin-hurtigbytter'

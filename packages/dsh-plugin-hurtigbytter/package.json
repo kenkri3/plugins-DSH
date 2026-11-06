@@ -1,0 +1,26 @@
+{
+  "name": "dsh-plugin-hurtigbytter",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Hurtigbytter i DSH: sok i tråder og prosjekter, apne med ett klikk.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "meta": {
+    "title": "Automations",
+    "description": "One thread per automation: next and last run, result, and what is waiting."
+  },
+  "topp": {
+    "altGront": "All green",
+    "oppsummering": "{tilFiks} to fix · {dinTur} yours",
+    "gront": "{antall} green"
+  }
+}
